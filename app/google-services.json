@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "383518085395",
+    "project_id": "madaraka-utility-system",
+    "storage_bucket": "madaraka-utility-system.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383518085395:android:e6b467f0608874dc810ae6",
+        "android_client_info": {
+          "package_name": "com.madaraka.connect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDRAxSs4PJZVBRvsNiAPktjcnx1oRV5sgs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

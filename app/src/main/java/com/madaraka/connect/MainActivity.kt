@@ -7,7 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import com.madaraka.connect.ui.auth.LoginScreen
+import com.madaraka.connect.navigation.AppNavHost
 import com.madaraka.connect.ui.theme.MadarakaConnectTheme
 
 class MainActivity : ComponentActivity() {
@@ -20,8 +20,8 @@ class MainActivity : ComponentActivity() {
             MadarakaConnectTheme {
                 // Surface fills the screen and paints the background color
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    // Show the login screen as the first screen when the app opens
-                    LoginScreen()
+                    // The NavHost decides which screen to show based on auth state
+                    AppNavHost()
                 }
             }
         }

@@ -24,18 +24,22 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 
-// Brand colors matched from the existing Madaraka Connect website
-private val BrandBlue = Color(0xFF2563EB)      // Primary action color
-private val BrandCharcoal = Color(0xFF111827)  // Heading text color
-private val PageBackground = Color(0xFFF8FAFC) // Page background color
+// Brand colors shared across all screens
+private val BrandBlue = Color(0xFF2563EB)
+private val BrandCharcoal = Color(0xFF111827)
+private val PageBackground = Color(0xFFF8FAFC)
+private val ErrorRed = Color(0xFFDC2626)
 
 @Composable
 fun LoginScreen(
     // Called when the user taps the register link at the bottom
     onNavigateToRegister: () -> Unit = {},
-    // Called when the user taps the sign-in button with their email and password
-    onLoginClicked: (email: String, password: String) -> Unit = { _, _ -> }
+    // Called when sign-in succeeds so the NavHost can move on
+    onLoginSuccess: () -> Unit = {},
+    // Shared auth ViewModel provided by the NavHost
+    viewModel: AuthViewModel = viewModel()
 ) {
     // Holds the current text typed in the email field
     var email by remember { mutableStateOf("") }
@@ -43,6 +47,10 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     // Tracks whether the password is shown as plain text or hidden
     var passwordVisible by remember { mutableStateOf(false) }
+
+    // Observe ViewModel state
+    val isLoading by viewModel.isLoading.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
 
     // Full-screen container that centers the login card both horizontally and vertically
     Box(
@@ -82,7 +90,10 @@ fun LoginScreen(
             )
 
             // Link that switches to the registration screen
-            TextButton(onClick = onNavigateToRegister) {
+            TextButton(onClick = {
+                viewModel.clearError()
+                onNavigateToRegister()
+            }) {
                 Text(
                     text = "Or register for a new account",
                     color = BrandBlue,
@@ -107,10 +118,11 @@ fun LoginScreen(
                     // Email input field with envelope icon
                     OutlinedTextField(
                         value = email,
-                        onValueChange = { email = it },
+                        onValueChange = { email = it; viewModel.clearError() },
                         label = { Text("Email address") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Email") },
                         singleLine = true,
+                        enabled = !isLoading,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -120,11 +132,10 @@ fun LoginScreen(
                     // Password input field with lock icon and show/hide toggle
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { password = it; viewModel.clearError() },
                         label = { Text("Password") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Password") },
                         trailingIcon = {
-                            // Icon button that toggles password visibility
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
                                     imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
@@ -133,6 +144,7 @@ fun LoginScreen(
                             }
                         },
                         singleLine = true,
+                        enabled = !isLoading,
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth()
@@ -150,16 +162,37 @@ fun LoginScreen(
                         }
                     }
 
-                    // Primary sign-in button
+                    // Show the error from the ViewModel, if any
+                    if (errorMessage != null) {
+                        Text(
+                            text = errorMessage!!,
+                            color = ErrorRed,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+
+                    // Primary sign-in button with inline spinner while loading
                     Button(
-                        onClick = { onLoginClicked(email, password) },
+                        onClick = {
+                            viewModel.signIn(email, password, onSuccess = onLoginSuccess)
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = !isLoading
                     ) {
-                        Text("Sign In →", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Sign In →", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }

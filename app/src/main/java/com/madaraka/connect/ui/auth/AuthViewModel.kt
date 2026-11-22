@@ -2,8 +2,10 @@ package com.madaraka.connect.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FirebaseFirestore
 import com.madaraka.connect.data.models.User
 import com.madaraka.connect.data.models.UserRole
 import com.madaraka.connect.data.repositories.UserRepository
@@ -13,31 +15,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
-// Holds Firebase auth state for Login and Register screens
+private val BrandBlue = androidx.compose.ui.graphics.Color(0xFF2563EB)
+private val BrandCharcoal = androidx.compose.ui.graphics.Color(0xFF111827)
+private val PageBackground = androidx.compose.ui.graphics.Color(0xFFF8FAFC)
+private val ErrorRed = androidx.compose.ui.graphics.Color(0xFFDC2626)
+
+// ViewModel managing authentication state and user profile loading
 class AuthViewModel(
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) : ViewModel() {
 
-    // Signed-in user, or null when signed out
+    // Active Firebase Auth user or null when signed out
     private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
     val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
 
-    // Full user profile from Firestore, including role and department
+    // Firestore profile for the signed-in user
     private val _currentUserProfile = MutableStateFlow<User?>(null)
     val currentUserProfile: StateFlow<User?> = _currentUserProfile.asStateFlow()
 
-    // Where we fetch the user's profile document after sign-in
-    private val userRepository = UserRepository()
+    // Repository for reading user documents
+    private val userRepository = UserRepository(firestore)
 
-    // True while a Firebase call is running
+    // Loading indicator flag for auth actions
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Human-readable error to show in red on the screen
+    // Error message displayed on auth screens
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // On startup, if Firebase Auth already has a user, fetch their profile
+    // Load profile automatically on startup if already signed in
     init {
         val existing = auth.currentUser
         if (existing != null) {
@@ -47,11 +55,12 @@ class AuthViewModel(
         }
     }
 
+    // Clear current error message
     fun clearError() {
         _errorMessage.value = null
     }
 
-    // Sign in an existing user and load their Firestore profile
+    // Sign in with email and password and verify Firestore profile
     fun signIn(email: String, password: String, onSuccess: () -> Unit) {
         if (email.isBlank() || password.isBlank()) {
             _errorMessage.value = "Please enter both email and password."
@@ -62,15 +71,12 @@ class AuthViewModel(
 
         viewModelScope.launch {
             try {
-                // Step 1: sign in with Firebase Auth
                 val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
                 _currentUser.value = result.user
 
-                // Step 2: fetch the user's Firestore profile
-                val uid = result.user?.uid ?: ""
+                val uid = result.user?.uid.orEmpty()
                 val profile = userRepository.getUserById(uid)
 
-                // Step 3: refuse to proceed if the profile is missing
                 if (profile == null) {
                     auth.signOut()
                     _currentUser.value = null
@@ -79,7 +85,6 @@ class AuthViewModel(
                     return@launch
                 }
 
-                // Step 3b: refuse to proceed if the account is suspended
                 if (!profile.isActive) {
                     auth.signOut()
                     _currentUser.value = null
@@ -88,18 +93,17 @@ class AuthViewModel(
                     return@launch
                 }
 
-                // Step 4: store the profile and let the UI navigate
                 _currentUserProfile.value = profile
                 _isLoading.value = false
                 onSuccess()
             } catch (e: Exception) {
                 _isLoading.value = false
-                _errorMessage.value = friendlyError(e.message ?: "")
+                _errorMessage.value = friendlyError(e.message.orEmpty())
             }
         }
     }
 
-    // Create a new account and load (or default) the profile
+    // Register a new resident account and save its Firestore profile document
     fun register(email: String, password: String, confirmPassword: String, onSuccess: () -> Unit) {
         if (email.isBlank() || password.isBlank()) {
             _errorMessage.value = "Please fill in all fields."
@@ -119,39 +123,53 @@ class AuthViewModel(
 
         viewModelScope.launch {
             try {
-                // Step 1: create the Firebase Auth account
                 val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
                 _currentUser.value = result.user
 
-                // Step 2: fetch the profile; if none exists, build a default Resident profile
-                val uid = result.user?.uid ?: ""
-                val fetched = userRepository.getUserById(uid)
-                val profile = fetched ?: User(
-                    uid = uid,
-                    email = email.trim(),
-                    role = UserRole.RESIDENT,
-                    status = "Active"
-                )
+                val uid = result.user?.uid.orEmpty()
+                val cleanEmail = email.trim()
+                val existing = userRepository.getUserById(uid)
 
-                // Step 3: store the profile and let the UI navigate
+                val profile = if (existing != null) {
+                    existing
+                } else {
+                    val now = Timestamp.now()
+                    val userDoc = mapOf(
+                        "email" to cleanEmail,
+                        "role" to "Resident",
+                        "status" to "Active",
+                        "createdAt" to now
+                    )
+                    if (uid.isNotBlank()) {
+                        firestore.collection("users").document(uid).set(userDoc).await()
+                    }
+                    User(
+                        uid = uid,
+                        email = cleanEmail,
+                        role = UserRole.RESIDENT,
+                        status = "Active",
+                        createdAt = now
+                    )
+                }
+
                 _currentUserProfile.value = profile
                 _isLoading.value = false
                 onSuccess()
             } catch (e: Exception) {
                 _isLoading.value = false
-                _errorMessage.value = friendlyError(e.message ?: "")
+                _errorMessage.value = friendlyError(e.message.orEmpty())
             }
         }
     }
 
-    // Sign out and clear the cached user + profile
+    // Sign out and clear active session state
     fun signOut() {
         auth.signOut()
         _currentUser.value = null
         _currentUserProfile.value = null
     }
 
-    // Map ugly Firebase messages to something a user can read
+    // Convert Firebase error messages into clear user-facing text
     private fun friendlyError(raw: String): String = when {
         raw.contains("password is invalid", true) ||
                 raw.contains("INVALID_LOGIN_CREDENTIALS", true) -> "Incorrect email or password."

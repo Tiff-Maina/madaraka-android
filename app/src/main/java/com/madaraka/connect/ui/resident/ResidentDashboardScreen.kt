@@ -8,10 +8,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,7 +23,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.madaraka.connect.data.models.Ticket
@@ -37,30 +42,30 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Brand colors shared across the app
 private val BrandBlue = Color(0xFF2563EB)
 private val BrandBlueDark = Color(0xFF1E3A8A)
 private val BrandCharcoal = Color(0xFF111827)
 private val PageBackground = Color(0xFFF8FAFC)
+private val ErrorRed = Color(0xFFDC2626)
 
-// ViewModel that holds the resident's tickets for this screen
+// ViewModel holding resident tickets for the dashboard
 class ResidentViewModel(
     private val ticketRepository: TicketRepository = TicketRepository()
 ) : ViewModel() {
 
-    // The resident's tickets, newest first
+    // Resident tickets sorted newest first
     private val _tickets = MutableStateFlow<List<Ticket>>(emptyList())
     val tickets: StateFlow<List<Ticket>> = _tickets.asStateFlow()
 
-    // True while the first fetch is running
+    // Loading state for initial fetch
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Any error message from the fetch
+    // Error message if loading fails
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // Load (or reload) the resident's tickets
+    // Fetch tickets for the signed-in resident
     fun loadTickets(residentId: String) {
         if (residentId.isBlank()) return
         _isLoading.value = true
@@ -71,19 +76,7 @@ class ResidentViewModel(
             _isLoading.value = false
         }
     }
-
-    // Computed counts for the three stat cards
-    val totalCount: Int get() = _tickets.value.size
-    val dispatchedCount: Int get() = _tickets.value.count {
-        it.status == TicketStatus.DISPATCHED || it.status == TicketStatus.IN_PROGRESS
-    }
-    val resolvedCount: Int get() = _tickets.value.count {
-        it.status == TicketStatus.RESOLVED || it.status == TicketStatus.CLOSED
-    }
 }
-
-// What the bottom navigation bar can call when a tab is tapped
-enum class ResidentTab { DASHBOARD, REPORTS, HELP }
 
 @Composable
 fun ResidentDashboardScreen(
@@ -91,22 +84,34 @@ fun ResidentDashboardScreen(
     onReportNewFault: () -> Unit = {},
     onViewAllReports: () -> Unit = {},
     onNavigateToSupport: () -> Unit = {},
+    onNavigateToClusters: () -> Unit = {},
     onSignOut: () -> Unit = {},
     viewModel: ResidentViewModel = viewModel()
 ) {
-    // Observe ViewModel state
     val tickets by viewModel.tickets.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    // Load tickets when the screen first appears
+    // Reload tickets on initial load and when returning to screen
     LaunchedEffect(residentId) {
         if (residentId.isNotBlank()) {
             viewModel.loadTickets(residentId)
         }
     }
 
-    // Three stat values
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Refresh tickets whenever the dashboard resumes
+    DisposableEffect(lifecycleOwner, residentId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && residentId.isNotBlank()) {
+                viewModel.loadTickets(residentId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val totalReports = tickets.size
     val dispatchedReports = tickets.count {
         it.status == TicketStatus.DISPATCHED || it.status == TicketStatus.IN_PROGRESS
@@ -122,6 +127,7 @@ fun ResidentDashboardScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -132,12 +138,21 @@ fun ResidentDashboardScreen(
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    IconButton(onClick = { /* Phase 4D: notifications */ }) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = "Notifications",
-                            tint = BrandCharcoal
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { }) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Notifications",
+                                tint = BrandCharcoal
+                            )
+                        }
+                        IconButton(onClick = onSignOut) {
+                            Icon(
+                                imageVector = Icons.Default.Logout,
+                                contentDescription = "Sign Out",
+                                tint = ErrorRed
+                            )
+                        }
                     }
                 }
             }
@@ -146,7 +161,7 @@ fun ResidentDashboardScreen(
             NavigationBar(containerColor = Color.White) {
                 NavigationBarItem(
                     selected = true,
-                    onClick = { /* already here */ },
+                    onClick = { },
                     icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
                     label = { Text("Dashboard", fontSize = 11.sp) }
                 )
@@ -158,6 +173,12 @@ fun ResidentDashboardScreen(
                 )
                 NavigationBarItem(
                     selected = false,
+                    onClick = onNavigateToClusters,
+                    icon = { Icon(Icons.Default.Hub, contentDescription = "Clusters") },
+                    label = { Text("Clusters", fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = false,
                     onClick = onNavigateToSupport,
                     icon = { Icon(Icons.Default.HelpOutline, contentDescription = "Help") },
                     label = { Text("Help", fontSize = 11.sp) }
@@ -166,7 +187,6 @@ fun ResidentDashboardScreen(
         }
     ) { padding ->
         if (isLoading && tickets.isEmpty()) {
-            // Simple loading indicator while the first fetch runs
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -179,7 +199,6 @@ fun ResidentDashboardScreen(
         }
 
         if (errorMessage != null && tickets.isEmpty()) {
-            // Error state with retry
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -189,7 +208,7 @@ fun ResidentDashboardScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = errorMessage ?: "",
-                        color = Color(0xFFDC2626),
+                        color = ErrorRed,
                         fontSize = 14.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -201,7 +220,6 @@ fun ResidentDashboardScreen(
             return@Scaffold
         }
 
-        // Main scrollable content
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -211,7 +229,7 @@ fun ResidentDashboardScreen(
         ) {
             item { Spacer(modifier = Modifier.height(4.dp)) }
 
-            // Blue gradient "Report New Fault" banner
+            // Report fault banner card
             item {
                 Box(
                     modifier = Modifier
@@ -254,7 +272,7 @@ fun ResidentDashboardScreen(
                 }
             }
 
-            // Three stat cards
+            // Summary stat cards
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard(
@@ -278,7 +296,7 @@ fun ResidentDashboardScreen(
                 }
             }
 
-            // "Recent Activity" header + View all link
+            // Recent activity section header
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -303,7 +321,6 @@ fun ResidentDashboardScreen(
                 }
             }
 
-            // Up to 3 recent tickets
             if (tickets.isEmpty()) {
                 item {
                     Card(
@@ -336,7 +353,7 @@ fun ResidentDashboardScreen(
     }
 }
 
-// One stat card on the dashboard
+// Single metric card on the dashboard
 @Composable
 private fun StatCard(
     label: String,
@@ -370,7 +387,7 @@ private fun StatCard(
     }
 }
 
-// One row in the "Recent Activity" list
+// Single ticket summary row under Recent Activity
 @Composable
 private fun RecentActivityRow(ticket: Ticket) {
     Card(
@@ -415,7 +432,7 @@ private fun RecentActivityRow(ticket: Ticket) {
     }
 }
 
-// Turns a Date into a short "6 Jul 2026" style string
+// Format ticket date for display
 private fun formatDate(date: Date?): String {
     if (date == null) return "Just now"
     return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(date)

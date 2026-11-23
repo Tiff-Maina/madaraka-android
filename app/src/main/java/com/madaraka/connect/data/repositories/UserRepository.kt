@@ -38,4 +38,30 @@ class UserRepository(
             emptyList()
         }
     }
+
+    // Fetches every user document (used by admin for user management)
+    suspend fun getAllUsers(): List<User> {
+        return try {
+            val snapshot = firestore.collection("users").get().await()
+            snapshot.documents.mapNotNull { doc ->
+                doc.data?.let { User.fromMap(uid = doc.id, map = it) }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    // Updates a user's status field (Active / Suspended)
+    suspend fun updateUserStatus(uid: String, newStatus: String): Boolean {
+        if (uid.isBlank() || newStatus.isBlank()) return false
+        return try {
+            firestore.collection("users")
+                .document(uid)
+                .update("status", newStatus)
+                .await()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

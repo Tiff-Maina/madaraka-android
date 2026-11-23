@@ -14,7 +14,7 @@ enum class UserRole {
         fun fromString(value: String?): UserRole = when (value?.trim()?.lowercase()) {
             "resident" -> RESIDENT
             "dispatcher" -> DISPATCHER
-            "system admin", "admin" -> ADMIN
+            "system admin", "admin", "administrator" -> ADMIN
             else -> UNKNOWN
         }
     }

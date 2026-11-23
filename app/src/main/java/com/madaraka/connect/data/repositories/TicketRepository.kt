@@ -176,6 +176,29 @@ class TicketRepository(
         return updateFields(ticketId, mapOf("rating" to rating))
     }
 
+    // Dispatcher assigns a technician: status = "Dispatched" + name/contact saved
+    suspend fun assignTechnician(
+        ticketId: String,
+        technicianName: String,
+        technicianContact: String
+    ): Boolean {
+        if (technicianName.isBlank() || technicianContact.isBlank()) return false
+        return updateFields(
+            ticketId,
+            mapOf(
+                "status" to "Dispatched",
+                "technicianName" to technicianName.trim(),
+                "technicianContact" to technicianContact.trim()
+            )
+        )
+    }
+
+    // Generic status change — used by dispatcher Pending/Resolve buttons
+    suspend fun updateTicketStatus(ticketId: String, newStatus: String): Boolean {
+        if (ticketId.isBlank() || newStatus.isBlank()) return false
+        return updateFields(ticketId, mapOf("status" to newStatus))
+    }
+
     // Shared helper: apply a partial update to one ticket, return success
     private suspend fun updateFields(ticketId: String, fields: Map<String, Any?>): Boolean {
         if (ticketId.isBlank()) return false
@@ -186,11 +209,11 @@ class TicketRepository(
                 .await()
             true
         } catch (e: Exception) {
-            Log.e(TAG, "updateFields failed for $ticketId", e)
             false
         }
     }
 
+    // Companion object holds the log tag used throughout this file
     private companion object {
         const val TAG = "TicketRepository"
     }

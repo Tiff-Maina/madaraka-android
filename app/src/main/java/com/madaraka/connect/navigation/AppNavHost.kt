@@ -18,9 +18,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.auth.FirebaseAuth
+import com.madaraka.connect.ui.admin.AdminDashboardScreen
 import com.madaraka.connect.ui.auth.AuthViewModel
 import com.madaraka.connect.ui.auth.LoginScreen
 import com.madaraka.connect.ui.auth.RegisterScreen
+import com.madaraka.connect.ui.dispatcher.DispatcherAnalyticsScreen
+import com.madaraka.connect.ui.dispatcher.DispatcherDashboardScreen
 import com.madaraka.connect.ui.resident.MasterIncidentsScreen
 import com.madaraka.connect.ui.resident.MyReportsScreen
 import com.madaraka.connect.ui.resident.ReportFaultScreen
@@ -29,7 +32,6 @@ import com.madaraka.connect.ui.resident.ResidentDashboardScreen
 private val BrandBlue = Color(0xFF2563EB)
 private val BrandCharcoal = Color(0xFF111827)
 private val PageBackground = Color(0xFFF8FAFC)
-private val ErrorRed = Color(0xFFDC2626)
 
 // Route names used across navigation
 object Routes {
@@ -40,8 +42,9 @@ object Routes {
     const val REPORT_FAULT = "report_fault"
     const val MASTER_INCIDENTS = "master_incidents"
     const val HELP = "help"
-    const val DISPATCHER_PLACEHOLDER = "dispatcher_placeholder"
-    const val ADMIN_PLACEHOLDER = "admin_placeholder"
+    const val DISPATCHER_DASHBOARD = "dispatcher_dashboard"
+    const val DISPATCHER_ANALYTICS = "dispatcher_analytics"
+    const val ADMIN_DASHBOARD = "admin_dashboard"
 }
 
 @Composable
@@ -52,13 +55,18 @@ fun AppNavHost(
     val currentProfile by viewModel.currentUserProfile.collectAsState()
     val residentId = currentProfile?.uid.orEmpty()
     val role = currentProfile?.role
+    val department = currentProfile?.department.orEmpty()
+    val agencyName = currentProfile?.agencyName
+        ?: currentProfile?.email
+        ?: "Dispatcher"
+    val adminEmail = currentProfile?.email.orEmpty()
 
     // Select start destination from signed-in user's role
     val startDestination = when {
         currentProfile == null -> Routes.LOGIN
         role?.name == "RESIDENT" -> Routes.RESIDENT_DASHBOARD
-        role?.name == "DISPATCHER" -> Routes.DISPATCHER_PLACEHOLDER
-        role?.name == "ADMIN" -> Routes.ADMIN_PLACEHOLDER
+        role?.name == "DISPATCHER" -> Routes.DISPATCHER_DASHBOARD
+        role?.name == "ADMIN" -> Routes.ADMIN_DASHBOARD
         else -> Routes.LOGIN
     }
 
@@ -70,8 +78,8 @@ fun AppNavHost(
                 onLoginSuccess = {
                     val target = when (viewModel.currentUserProfile.value?.role?.name) {
                         "RESIDENT" -> Routes.RESIDENT_DASHBOARD
-                        "DISPATCHER" -> Routes.DISPATCHER_PLACEHOLDER
-                        "ADMIN" -> Routes.ADMIN_PLACEHOLDER
+                        "DISPATCHER" -> Routes.DISPATCHER_DASHBOARD
+                        "ADMIN" -> Routes.ADMIN_DASHBOARD
                         else -> Routes.LOGIN
                     }
                     navController.navigate(target) {
@@ -94,12 +102,12 @@ fun AppNavHost(
             )
         }
 
+        // ----- RESIDENT ROUTES -----
+
         composable(Routes.RESIDENT_DASHBOARD) {
             ResidentDashboardScreen(
                 residentId = residentId,
-                onReportNewFault = {
-                    navController.navigate(Routes.REPORT_FAULT)
-                },
+                onReportNewFault = { navController.navigate(Routes.REPORT_FAULT) },
                 onViewAllReports = { navController.navigate(Routes.MY_REPORTS) },
                 onNavigateToSupport = { navController.navigate(Routes.HELP) },
                 onNavigateToClusters = { navController.navigate(Routes.MASTER_INCIDENTS) },
@@ -124,73 +132,60 @@ fun AppNavHost(
             ReportFaultScreen(
                 residentId = residentId,
                 residentEmail = FirebaseAuth.getInstance().currentUser?.email.orEmpty(),
-                onBack = {
-                    navController.popBackStack()
-                },
-                onReportSubmitted = {
-                    navController.popBackStack()
-                }
+                onBack = { navController.popBackStack() },
+                onReportSubmitted = { navController.popBackStack() }
             )
         }
 
         composable(Routes.MASTER_INCIDENTS) {
-            MasterIncidentsScreen(
-                onBack = { navController.popBackStack() }
-            )
+            MasterIncidentsScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Routes.HELP) {
             HelpScreen(onBack = { navController.popBackStack() })
         }
 
-        composable(Routes.DISPATCHER_PLACEHOLDER) {
-            RolePlaceholderScreen(
-                title = "Dispatcher Dashboard",
-                subtitle = "Handled primarily on the web dashboard",
+        // ----- DISPATCHER ROUTES -----
+
+        composable(Routes.DISPATCHER_DASHBOARD) {
+            DispatcherDashboardScreen(
+                department = department,
+                agencyName = agencyName,
                 onSignOut = {
                     viewModel.signOut()
                     navController.navigate(Routes.LOGIN) {
-                        popUpTo(Routes.DISPATCHER_PLACEHOLDER) { inclusive = true }
+                        popUpTo(Routes.DISPATCHER_DASHBOARD) { inclusive = true }
+                    }
+                },
+                onNavigateToAnalytics = { navController.navigate(Routes.DISPATCHER_ANALYTICS) }
+            )
+        }
+
+        composable(Routes.DISPATCHER_ANALYTICS) {
+            DispatcherAnalyticsScreen(
+                onBack = { navController.popBackStack() },
+                onSignOut = {
+                    viewModel.signOut()
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(Routes.DISPATCHER_DASHBOARD) { inclusive = true }
                     }
                 }
             )
         }
 
-        composable(Routes.ADMIN_PLACEHOLDER) {
-            RolePlaceholderScreen(
-                title = "Admin Dashboard",
-                subtitle = "Handled primarily on the web dashboard",
+        // ----- ADMIN ROUTES -----
+
+        composable(Routes.ADMIN_DASHBOARD) {
+            AdminDashboardScreen(
+                adminEmail = adminEmail,
                 onSignOut = {
                     viewModel.signOut()
                     navController.navigate(Routes.LOGIN) {
-                        popUpTo(Routes.ADMIN_PLACEHOLDER) { inclusive = true }
+                        popUpTo(Routes.ADMIN_DASHBOARD) { inclusive = true }
                     }
                 }
             )
         }
-    }
-}
-
-// Temporary fallback screen for roles still in progress
-@Composable
-private fun RolePlaceholderScreen(
-    title: String,
-    subtitle: String,
-    onSignOut: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PageBackground)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = BrandCharcoal)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(subtitle, fontSize = 14.sp, color = BrandBlue)
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onSignOut) { Text("Sign Out") }
     }
 }
 

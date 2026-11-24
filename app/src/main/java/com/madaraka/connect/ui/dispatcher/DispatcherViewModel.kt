@@ -14,32 +14,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-// Holds dispatcher state, ticket list, and all actions the dispatcher can take
 class DispatcherViewModel(
     private val ticketRepository: TicketRepository = TicketRepository(),
     private val auditLogsRepository: AuditLogsRepository = AuditLogsRepository(),
     private val notificationRepository: NotificationRepository = NotificationRepository()
 ) : ViewModel() {
 
-    // The dispatcher's department, e.g. "Water Services"
     private var department: String = ""
-
-    // Display name used on audit logs (agencyName or fallback email)
     private var performedBy: String = ""
 
-    // All tickets for the dispatcher's department
     private val _tickets = MutableStateFlow<List<Ticket>>(emptyList())
     val tickets: StateFlow<List<Ticket>> = _tickets.asStateFlow()
 
-    // True while a fetch or action is running
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Snackbar message after an action
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    // Load tickets for the dispatcher's department
     fun load(departmentName: String, agencyOrEmail: String) {
         if (departmentName.isBlank()) return
         department = departmentName
@@ -48,7 +40,6 @@ class DispatcherViewModel(
         viewModelScope.launch {
             val category = FaultCategory.fromString(departmentName)
             val fetched = if (category == FaultCategory.UNKNOWN) {
-                // Fallback if department string doesn't match a known category
                 emptyList()
             } else {
                 ticketRepository.getTicketsByCategory(category)
@@ -62,28 +53,23 @@ class DispatcherViewModel(
         if (department.isNotBlank()) load(department, performedBy)
     }
 
-    // Active tickets: exclude Closed and Cancelled, urgent first
     fun activeTickets(): List<Ticket> = _tickets.value.filter {
         it.status != TicketStatus.CLOSED && it.status != TicketStatus.CANCELLED
     }
 
-    // All tickets, urgent first
     fun allTickets(): List<Ticket> = _tickets.value
 
-    // Assign a technician to a ticket. Returns validation error message, or null on success.
     fun assignTechnician(
         ticket: Ticket,
         technicianName: String,
         technicianContact: String
     ) {
-        // Validate name (first + last)
         val nameParts = technicianName.trim().split(Regex("\\s+"))
         if (nameParts.size < 2) {
             _message.value = "Please provide both first and last name of the technician."
             return
         }
 
-        // Validate phone (Kenyan format)
         val phone = technicianContact.trim()
         val phoneRegex = Regex("^(\\+254|0)\\d{9}$")
         if (!phoneRegex.matches(phone)) {
@@ -91,27 +77,38 @@ class DispatcherViewModel(
             return
         }
 
+        val cleanName = technicianName.trim()
         viewModelScope.launch {
             _isLoading.value = true
-            val ok = ticketRepository.assignTechnician(ticket.id, technicianName.trim(), phone)
+            val ok = ticketRepository.assignTechnician(ticket.id, cleanName, phone)
             if (ok) {
-                // Audit log — non-fatal if it fails
+                _tickets.value = sortUrgentFirst(
+                    _tickets.value.map { current ->
+                        if (current.id == ticket.id) {
+                            current.copy(
+                                status = TicketStatus.DISPATCHED,
+                                technicianName = cleanName,
+                                technicianContact = phone
+                            )
+                        } else {
+                            current
+                        }
+                    }
+                )
                 auditLogsRepository.writeAuditLog(
                     ticketId = ticket.id,
                     action = "Technician Assignment",
-                    details = "Assigned ${technicianName.trim()} ($phone)",
+                    details = "Assigned $cleanName ($phone)",
                     performedBy = performedBy
                 )
-                // Notify the resident — non-fatal if it fails
                 if (ticket.residentId.isNotBlank()) {
                     notificationRepository.createNotification(
                         recipientId = ticket.residentId,
                         title = "Technician Dispatched",
-                        message = "${technicianName.trim()} has been assigned to your ${ticket.category.displayName} issue."
+                        message = "$cleanName has been assigned to your ${ticket.category.displayName} issue."
                     )
                 }
                 _message.value = "Technician dispatched successfully."
-                reload()
             } else {
                 _message.value = "Failed to assign technician. Please try again."
             }
@@ -119,12 +116,17 @@ class DispatcherViewModel(
         }
     }
 
-    // Change ticket status (Pending / Resolved / etc.). Notifies resident when Resolved.
     fun changeStatus(ticket: Ticket, newStatus: String) {
         viewModelScope.launch {
             _isLoading.value = true
             val ok = ticketRepository.updateTicketStatus(ticket.id, newStatus)
             if (ok) {
+                val parsedStatus = TicketStatus.fromString(newStatus)
+                _tickets.value = sortUrgentFirst(
+                    _tickets.value.map { current ->
+                        if (current.id == ticket.id) current.copy(status = parsedStatus) else current
+                    }
+                )
                 auditLogsRepository.writeAuditLog(
                     ticketId = ticket.id,
                     action = "Status Update",
@@ -139,9 +141,57 @@ class DispatcherViewModel(
                     )
                 }
                 _message.value = "Status updated to $newStatus."
-                reload()
             } else {
                 _message.value = "Failed to update status."
+            }
+            _isLoading.value = false
+        }
+    }
+
+    // Resolves every open/unresolved ticket in a group cleanly in one pass
+    fun resolveGroup(groupTickets: List<Ticket>) {
+        val targets = groupTickets.filter {
+            it.status != TicketStatus.RESOLVED &&
+                    it.status != TicketStatus.CLOSED &&
+                    it.status != TicketStatus.CANCELLED
+        }
+        if (targets.isEmpty()) {
+            _message.value = "All reports in this group are already resolved or closed."
+            return
+        }
+
+        viewModelScope.launch {
+            _isLoading.value = true
+            val updatedIds = mutableSetOf<String>()
+            for (t in targets) {
+                val ok = ticketRepository.updateTicketStatus(t.id, "Resolved")
+                if (ok) {
+                    updatedIds.add(t.id)
+                    auditLogsRepository.writeAuditLog(
+                        ticketId = t.id,
+                        action = "Status Update",
+                        details = "Changed status to Resolved (group action)",
+                        performedBy = performedBy
+                    )
+                    if (t.residentId.isNotBlank()) {
+                        notificationRepository.createNotification(
+                            recipientId = t.residentId,
+                            title = "Issue Resolved",
+                            message = "Your ${t.category.displayName} ticket has been marked as resolved. Please confirm in your dashboard."
+                        )
+                    }
+                }
+            }
+
+            if (updatedIds.isNotEmpty()) {
+                _tickets.value = sortUrgentFirst(
+                    _tickets.value.map { current ->
+                        if (current.id in updatedIds) current.copy(status = TicketStatus.RESOLVED) else current
+                    }
+                )
+                _message.value = "Resolved ${updatedIds.size} report${if (updatedIds.size == 1) "" else "s"} in group."
+            } else {
+                _message.value = "Failed to resolve group tickets."
             }
             _isLoading.value = false
         }
@@ -150,8 +200,6 @@ class DispatcherViewModel(
     fun consumeMessage() {
         _message.value = null
     }
-
-    // ----- ANALYTICS -----
 
     val totalCount: Int get() = _tickets.value.size
 
@@ -175,7 +223,6 @@ class DispatcherViewModel(
 
     val ratedCount: Int get() = _tickets.value.count { (it.rating ?: 0) > 0 }
 
-    // Map: star (5..1) -> count of tickets with that rating
     fun ratingBreakdown(): Map<Int, Int> {
         val counts = mutableMapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0)
         _tickets.value.forEach { ticket ->
@@ -185,7 +232,6 @@ class DispatcherViewModel(
         return counts
     }
 
-    // Sort Escalated / Admin_Reviewed to the top, keep the rest in original order
     private fun sortUrgentFirst(list: List<Ticket>): List<Ticket> {
         val urgent = list.filter {
             it.status == TicketStatus.ESCALATED || it.status == TicketStatus.ADMIN_REVIEWED

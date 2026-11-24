@@ -4,17 +4,23 @@ import android.util.Log
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.madaraka.connect.data.ai.DeduplicationDecision
+import com.madaraka.connect.data.ai.SpatialDeduplicator
 import com.madaraka.connect.data.models.FaultCategory
 import com.madaraka.connect.data.models.GeoPoint
 import com.madaraka.connect.data.models.Ticket
 import kotlinx.coroutines.tasks.await
 
-// Reads and updates ticket documents in the Firestore "tickets" collection
+data class TicketSubmissionResult(
+    val ticketId: String?,
+    val decision: DeduplicationDecision
+)
+
 class TicketRepository(
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
+    private val incidentsRepository: MasterIncidentsRepository = MasterIncidentsRepository(firestore)
 ) {
 
-    // All tickets submitted by one resident, newest first
     suspend fun getTicketsByResident(residentId: String): List<Ticket> {
         if (residentId.isBlank()) {
             Log.w(TAG, "getTicketsByResident called with blank residentId")
@@ -36,7 +42,6 @@ class TicketRepository(
         }
     }
 
-    // All tickets in one department, newest first (dispatchers use this)
     suspend fun getTicketsByCategory(category: FaultCategory): List<Ticket> {
         if (category == FaultCategory.UNKNOWN) return emptyList()
         return try {
@@ -54,7 +59,6 @@ class TicketRepository(
         }
     }
 
-    // Every ticket in the system, newest first (admins use this)
     suspend fun getAllTickets(): List<Ticket> {
         return try {
             val snapshot = firestore.collection("tickets")
@@ -70,7 +74,6 @@ class TicketRepository(
         }
     }
 
-    // One ticket by its Firestore document ID (detail screens use this)
     suspend fun getTicketById(ticketId: String): Ticket? {
         if (ticketId.isBlank()) return null
         return try {
@@ -84,9 +87,7 @@ class TicketRepository(
         }
     }
 
-    // ----- WRITE ACTIONS -----
-
-    // Create a new fault report in Firestore
+    // Standard entry point (kept for backward compatibility)
     suspend fun createTicket(
         residentId: String,
         residentEmail: String,
@@ -95,21 +96,79 @@ class TicketRepository(
         location: GeoPoint? = null,
         imageUrl: String? = null
     ): String? {
-        if (
-            residentId.isBlank() ||
-            description.isBlank() ||
-            category == FaultCategory.UNKNOWN
-        ) {
+        return createTicketWithDeduplication(
+            residentId = residentId,
+            residentEmail = residentEmail,
+            category = category,
+            description = description,
+            location = location,
+            imageUrl = imageUrl
+        ).ticketId
+    }
+
+    // Creates a ticket AND automatically groups/links a MasterIncident within radius & 1-hour window
+    suspend fun createTicketWithDeduplication(
+        residentId: String,
+        residentEmail: String,
+        category: FaultCategory,
+        description: String,
+        location: GeoPoint? = null,
+        imageUrl: String? = null
+    ): TicketSubmissionResult {
+        if (residentId.isBlank() || description.isBlank() || category == FaultCategory.UNKNOWN) {
             Log.w(
                 TAG,
                 "createTicket rejected invalid input: residentIdBlank=${residentId.isBlank()}, " +
                         "descBlank=${description.isBlank()}, category=$category"
             )
-            return null
+            return TicketSubmissionResult(
+                ticketId = null,
+                decision = DeduplicationDecision(
+                    masterIncidentId = "",
+                    isNewIncident = false,
+                    distanceMeters = null,
+                    matchedTicketCount = 0,
+                    explanation = "Submission blocked: missing required resident, category, or description fields."
+                )
+            )
         }
 
+        if (!SpatialDeduplicator.isValidCoordinate(location)) {
+            return TicketSubmissionResult(
+                ticketId = null,
+                decision = DeduplicationDecision(
+                    masterIncidentId = "",
+                    isNewIncident = false,
+                    distanceMeters = null,
+                    matchedTicketCount = 0,
+                    explanation = "Submission blocked: please provide valid non-zero GPS coordinates within Madaraka Estate."
+                )
+            )
+        }
+
+        val validLoc = location!!
+        val now = Timestamp.now()
+
         return try {
+            val existingIncidents = incidentsRepository.getAllMasterIncidents()
+            val recentTickets = getTicketsByCategory(category)
+
+            val decision = SpatialDeduplicator.decideIncident(
+                category = category,
+                location = validLoc,
+                timestamp = now,
+                existingIncidents = existingIncidents,
+                recentTickets = recentTickets
+            )
+
             val ticketRef = firestore.collection("tickets").document()
+            val resolvedIncidentId = incidentsRepository.attachTicketToIncident(
+                existingIncidentId = decision.masterIncidentId.ifBlank { null },
+                ticketId = ticketRef.id,
+                category = category,
+                location = validLoc,
+                timestamp = now
+            ) ?: decision.masterIncidentId
 
             val ticketData = mutableMapOf<String, Any>(
                 "residentId" to residentId,
@@ -117,33 +176,43 @@ class TicketRepository(
                 "category" to category.displayName,
                 "description" to description.trim(),
                 "status" to "Pending",
-                "createdAt" to Timestamp.now()
+                "createdAt" to now,
+                "location" to mapOf(
+                    "lat" to validLoc.lat,
+                    "lng" to validLoc.lng
+                )
             )
 
-            // Add location only when one is provided
-            location?.let {
-                ticketData["location"] = mapOf(
-                    "lat" to it.lat,
-                    "lng" to it.lng
-                )
+            if (resolvedIncidentId.isNotBlank()) {
+                ticketData["masterIncidentId"] = resolvedIncidentId
             }
 
-            // Add image URL only when one is provided
             if (!imageUrl.isNullOrBlank()) {
                 ticketData["imageUrl"] = imageUrl
             }
 
             ticketRef.set(ticketData).await()
-            Log.d(TAG, "createTicket succeeded with id=${ticketRef.id}")
+            Log.d(TAG, "createTicket succeeded id=${ticketRef.id}, incident=$resolvedIncidentId")
 
-            ticketRef.id
+            TicketSubmissionResult(
+                ticketId = ticketRef.id,
+                decision = decision.copy(masterIncidentId = resolvedIncidentId)
+            )
         } catch (e: Exception) {
             Log.e(TAG, "createTicket failed", e)
-            null
+            TicketSubmissionResult(
+                ticketId = null,
+                decision = DeduplicationDecision(
+                    masterIncidentId = "",
+                    isNewIncident = false,
+                    distanceMeters = null,
+                    matchedTicketCount = 0,
+                    explanation = "Could not save report due to a network or database error."
+                )
+            )
         }
     }
 
-    // Escalate a ticket: status = "Escalated", record when
     suspend fun escalateTicket(ticketId: String): Boolean = updateFields(
         ticketId,
         mapOf(
@@ -152,31 +221,26 @@ class TicketRepository(
         )
     )
 
-    // Resident confirms the fix worked: status = "Closed"
     suspend fun confirmResolution(ticketId: String): Boolean = updateFields(
         ticketId,
         mapOf("status" to "Closed")
     )
 
-    // Resident says the fix didn't work: reopen as "Pending"
     suspend fun rejectResolution(ticketId: String): Boolean = updateFields(
         ticketId,
         mapOf("status" to "Pending")
     )
 
-    // Resident cancels a pending ticket: status = "Cancelled"
     suspend fun cancelTicket(ticketId: String): Boolean = updateFields(
         ticketId,
         mapOf("status" to "Cancelled")
     )
 
-    // Resident rates a closed ticket
     suspend fun rateTicket(ticketId: String, rating: Int): Boolean {
         if (rating !in 1..5) return false
         return updateFields(ticketId, mapOf("rating" to rating))
     }
 
-    // Dispatcher assigns a technician: status = "Dispatched" + name/contact saved
     suspend fun assignTechnician(
         ticketId: String,
         technicianName: String,
@@ -193,13 +257,11 @@ class TicketRepository(
         )
     }
 
-    // Generic status change — used by dispatcher Pending/Resolve buttons
     suspend fun updateTicketStatus(ticketId: String, newStatus: String): Boolean {
         if (ticketId.isBlank() || newStatus.isBlank()) return false
         return updateFields(ticketId, mapOf("status" to newStatus))
     }
 
-    // Shared helper: apply a partial update to one ticket, return success
     private suspend fun updateFields(ticketId: String, fields: Map<String, Any?>): Boolean {
         if (ticketId.isBlank()) return false
         return try {
@@ -213,7 +275,6 @@ class TicketRepository(
         }
     }
 
-    // Companion object holds the log tag used throughout this file
     private companion object {
         const val TAG = "TicketRepository"
     }

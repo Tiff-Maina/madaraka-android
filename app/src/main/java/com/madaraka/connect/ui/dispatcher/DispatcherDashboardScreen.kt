@@ -42,7 +42,6 @@ private val PageBackground = Color(0xFFF8FAFC)
 private val ErrorRed = Color(0xFFDC2626)
 private val AiPurple = Color(0xFF7C3AED)
 
-// Tabs the dispatcher can switch between
 private enum class DispatcherTab(val label: String) {
     ACTIVE("Active"),
     GROUPED("AI Grouped"),
@@ -50,7 +49,6 @@ private enum class DispatcherTab(val label: String) {
     CANCELLED("Cancelled")
 }
 
-// A group of tickets either shares a master incident, or is a single ungrouped ticket
 private sealed class DispatcherItem {
     data class Group(val masterIncidentId: String, val tickets: List<Ticket>) : DispatcherItem()
     data class Single(val ticket: Ticket) : DispatcherItem()
@@ -68,6 +66,7 @@ fun DispatcherDashboardScreen(
         if (department.isNotBlank()) viewModel.load(department, agencyName)
     }
 
+    val allLoadedTickets by viewModel.tickets.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val message by viewModel.message.collectAsState()
 
@@ -82,22 +81,24 @@ fun DispatcherDashboardScreen(
         }
     }
 
-    // Pick the right ticket list for the current tab
-    val ticketsRaw: List<Ticket> = when (selectedTab) {
-        DispatcherTab.ACTIVE -> viewModel.activeTickets()
-        DispatcherTab.GROUPED -> viewModel.allTickets().filter {
-            !it.masterIncidentId.isNullOrBlank()
-        }
-        DispatcherTab.CLOSED -> viewModel.allTickets().filter {
-            it.status == TicketStatus.CLOSED
-        }
-        DispatcherTab.CANCELLED -> viewModel.allTickets().filter {
-            it.status == TicketStatus.CANCELLED
+    val ticketsRaw: List<Ticket> = remember(allLoadedTickets, selectedTab) {
+        when (selectedTab) {
+            DispatcherTab.ACTIVE -> allLoadedTickets.filter {
+                it.status != TicketStatus.CLOSED && it.status != TicketStatus.CANCELLED
+            }
+            DispatcherTab.GROUPED -> allLoadedTickets.filter {
+                !it.masterIncidentId.isNullOrBlank()
+            }
+            DispatcherTab.CLOSED -> allLoadedTickets.filter {
+                it.status == TicketStatus.CLOSED
+            }
+            DispatcherTab.CANCELLED -> allLoadedTickets.filter {
+                it.status == TicketStatus.CANCELLED
+            }
         }
     }
-    val itemsGrouped = groupTickets(ticketsRaw)
+    val itemsGrouped = remember(ticketsRaw) { groupTickets(ticketsRaw) }
 
-    // Sign-out confirmation
     if (showSignOutDialog) {
         AlertDialog(
             onDismissRequest = { showSignOutDialog = false },
@@ -125,7 +126,6 @@ fun DispatcherDashboardScreen(
         topBar = {
             Surface(color = Color.White, shadowElevation = 1.dp) {
                 Column {
-                    // Title row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -157,7 +157,6 @@ fun DispatcherDashboardScreen(
                             )
                         }
                     }
-                    // Four scrollable tabs
                     ScrollableTabRow(
                         selectedTabIndex = selectedTab.ordinal,
                         containerColor = Color.White,
@@ -219,7 +218,6 @@ fun DispatcherDashboardScreen(
         ) {
             item { Spacer(modifier = Modifier.height(4.dp)) }
 
-            // Tab summary banner
             item {
                 TabSummaryBanner(
                     tab = selectedTab,
@@ -228,7 +226,6 @@ fun DispatcherDashboardScreen(
                 )
             }
 
-            // Stat cards only on Active tab
             if (selectedTab == DispatcherTab.ACTIVE) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -281,17 +278,12 @@ fun DispatcherDashboardScreen(
                         is DispatcherItem.Group -> GroupedIncidentCard(
                             item = item,
                             onAssignFirst = { name, phone ->
-                                viewModel.assignTechnician(item.tickets.first(), name, phone)
+                                item.tickets.firstOrNull()?.let { firstTicket ->
+                                    viewModel.assignTechnician(firstTicket, name, phone)
+                                }
                             },
                             onResolveGroup = {
-                                item.tickets.forEach { t ->
-                                    if (t.status != TicketStatus.RESOLVED &&
-                                        t.status != TicketStatus.CLOSED &&
-                                        t.status != TicketStatus.CANCELLED
-                                    ) {
-                                        viewModel.changeStatus(t, "Resolved")
-                                    }
-                                }
+                                viewModel.resolveGroup(item.tickets)
                             }
                         )
                         is DispatcherItem.Single -> DispatcherTicketCard(
@@ -311,7 +303,6 @@ fun DispatcherDashboardScreen(
     }
 }
 
-// What each tab shows at the top
 @Composable
 private fun TabSummaryBanner(
     tab: DispatcherTab,
@@ -327,7 +318,7 @@ private fun TabSummaryBanner(
         DispatcherTab.GROUPED -> TabSummary(
             Color(0xFFF5F3FF), AiPurple,
             "AI-Grouped Incidents",
-            "$groupedCount master incident${if (groupedCount == 1) "" else "s"} · $count report${if (count == 1) "" else "s"} grouped by DBSCAN"
+            "$groupedCount master incident${if (groupedCount == 1) "" else "s"} · $count report${if (count == 1) "" else "s"} grouped (K-Means / 150m & 1h)"
         )
         DispatcherTab.CLOSED -> TabSummary(
             Color(0xFFF1F5F9), BrandCharcoal,
@@ -354,7 +345,6 @@ private fun TabSummaryBanner(
     }
 }
 
-// Data holder for tab banner
 private data class TabSummary(
     val bg: Color,
     val fg: Color,
@@ -362,15 +352,13 @@ private data class TabSummary(
     val subtitle: String
 )
 
-// Empty-state message per tab
 private fun emptyMessageFor(tab: DispatcherTab): String = when (tab) {
     DispatcherTab.ACTIVE -> "No active tickets."
-    DispatcherTab.GROUPED -> "No AI-grouped incidents yet. Reports will appear here once the AI groups them."
+    DispatcherTab.GROUPED -> "No AI-grouped incidents yet. Nearby reports in the same category and time window will appear here."
     DispatcherTab.CLOSED -> "No closed tickets yet."
     DispatcherTab.CANCELLED -> "No cancelled tickets."
 }
 
-// Group tickets by masterIncidentId
 private fun groupTickets(tickets: List<Ticket>): List<DispatcherItem> {
     val groups = LinkedHashMap<String, MutableList<Ticket>>()
     val singles = mutableListOf<DispatcherItem>()
@@ -397,7 +385,6 @@ private fun groupTickets(tickets: List<Ticket>): List<DispatcherItem> {
     return groupItems + singles
 }
 
-// AI-grouped incident card
 @Composable
 private fun GroupedIncidentCard(
     item: DispatcherItem.Group,
@@ -420,7 +407,7 @@ private fun GroupedIncidentCard(
         AlertDialog(
             onDismissRequest = { showTicketsDialog = false },
             title = {
-                Text("${item.masterIncidentId} · $count reports", fontWeight = FontWeight.Bold)
+                Text("${item.masterIncidentId} · $count report${if (count == 1) "" else "s"}", fontWeight = FontWeight.Bold)
             },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -430,7 +417,12 @@ private fun GroupedIncidentCard(
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text(t.residentEmail, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BrandCharcoal)
+                                Text(
+                                    t.residentEmail.ifBlank { "Resident (${t.residentId.take(6)})" },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BrandCharcoal
+                                )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(t.description, fontSize = 13.sp, color = BrandCharcoal.copy(alpha = 0.75f))
                             }
@@ -462,13 +454,13 @@ private fun GroupedIncidentCard(
                 Icon(Icons.Default.SmartToy, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "AI GROUPED $count REPORTS",
+                    text = if (count > 1) "AI CLUSTER ($count REPORTS)" else "MASTER INCIDENT (1 REPORT)",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Spacer(modifier = Modifier.weight(1f))
-                Text(item.masterIncidentId, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(item.masterIncidentId.take(10), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             if (hasUrgent) {
@@ -497,7 +489,10 @@ private fun GroupedIncidentCard(
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = "$count residents reported similar issues",
+                            text = if (count > 1)
+                                "$count nearby reports grouped within 150m & 1h"
+                            else
+                                "Single report tracking this area",
                             color = AiPurple,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -558,7 +553,7 @@ private fun GroupedIncidentCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("View all $count reports", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("View all $count report${if (count == 1) "" else "s"}", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -632,7 +627,6 @@ private fun GroupedIncidentCard(
     }
 }
 
-// Single (ungrouped) ticket card
 @Composable
 private fun DispatcherTicketCard(
     ticket: Ticket,

@@ -1,6 +1,7 @@
 package com.madaraka.connect.ui.auth
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 // Brand colors shared across all screens
@@ -48,9 +50,19 @@ fun LoginScreen(
     // Tracks whether the password is shown as plain text or hidden
     var passwordVisible by remember { mutableStateOf(false) }
 
+    // Whether the saved-emails dropdown is visible
+    var showDropdown by remember { mutableStateOf(false) }
+    // Saved emails (loaded once when the screen opens)
+    var savedEmails by remember { mutableStateOf<List<String>>(emptyList()) }
+
     // Observe ViewModel state
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+
+    // Load saved emails once on first composition
+    LaunchedEffect(Unit) {
+        savedEmails = viewModel.getSavedEmails()
+    }
 
     // Full-screen container that centers the login card both horizontally and vertically
     Box(
@@ -115,19 +127,76 @@ fun LoginScreen(
                         .fillMaxWidth()
                         .padding(24.dp)
                 ) {
-                    // Email input field with envelope icon
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; viewModel.clearError() },
-                        label = { Text("Email address") },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Email") },
-                        singleLine = true,
-                        enabled = !isLoading,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 16.dp)
-                    )
+                    // Box wrapper so the DropdownMenu can anchor to the email field
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        // Email input field with envelope icon
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = {
+                                email = it
+                                viewModel.clearError()
+                                // Hide dropdown once the user starts typing
+                                if (showDropdown && it.isNotBlank()) showDropdown = false
+                            },
+                            label = { Text("Email address") },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Email") },
+                            trailingIcon = {
+                                // Show a small chevron if there are saved emails
+                                if (savedEmails.isNotEmpty() && !isLoading) {
+                                    IconButton(onClick = { showDropdown = !showDropdown }) {
+                                        Text(
+                                            text = "▾",
+                                            fontSize = 18.sp,
+                                            color = BrandBlue,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            enabled = !isLoading,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { if (savedEmails.isNotEmpty()) showDropdown = true }
+                        )
+
+                        // Dropdown showing previously used emails
+                        DropdownMenu(
+                            expanded = showDropdown,
+                            onDismissRequest = { showDropdown = false },
+                            // Non-focusable so the keyboard/typing still works
+                            properties = PopupProperties(focusable = false)
+                        ) {
+                            savedEmails.forEach { saved ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = saved,
+                                            color = BrandCharcoal,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Email,
+                                            contentDescription = null,
+                                            tint = BrandBlue,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        email = saved
+                                        viewModel.clearError()
+                                        showDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     // Password input field with lock icon and show/hide toggle
                     OutlinedTextField(
@@ -175,7 +244,11 @@ fun LoginScreen(
                     // Primary sign-in button with inline spinner while loading
                     Button(
                         onClick = {
-                            viewModel.signIn(email, password, onSuccess = onLoginSuccess)
+                            viewModel.signIn(email, password, onSuccess = {
+                                // Refresh saved emails on next open
+                                savedEmails = viewModel.getSavedEmails()
+                                onLoginSuccess()
+                            })
                         },
                         modifier = Modifier
                             .fillMaxWidth()

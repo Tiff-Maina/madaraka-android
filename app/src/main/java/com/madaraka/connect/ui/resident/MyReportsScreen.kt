@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Person
@@ -54,25 +55,20 @@ class MyReportsViewModel(
     private val ticketRepository: TicketRepository = TicketRepository()
 ) : ViewModel() {
 
-    // The resident's tickets, newest first
     private val _tickets = MutableStateFlow<List<Ticket>>(emptyList())
     val tickets: StateFlow<List<Ticket>> = _tickets.asStateFlow()
 
-    // True while a fetch or action is running
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Snackbar message after an action
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    // Tracks which star the user selected per ticket (id -> 1..5)
     private val _tempRatings = MutableStateFlow<Map<String, Int>>(emptyMap())
     val tempRatings: StateFlow<Map<String, Int>> = _tempRatings.asStateFlow()
 
     private var residentId: String = ""
 
-    // Load or reload the resident's tickets
     fun load(residentId: String) {
         if (residentId.isBlank()) return
         this.residentId = residentId
@@ -142,6 +138,7 @@ class MyReportsViewModel(
 fun MyReportsScreen(
     residentId: String,
     onBackToDashboard: () -> Unit = {},
+    onNavigateToClusters: () -> Unit = {},
     onNavigateToSupport: () -> Unit = {},
     viewModel: MyReportsViewModel = viewModel()
 ) {
@@ -171,6 +168,7 @@ fun MyReportsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -180,7 +178,7 @@ fun MyReportsScreen(
                     Text(
                         text = "My Reports",
                         color = BrandCharcoal,
-                        fontSize = 20.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
@@ -192,19 +190,25 @@ fun MyReportsScreen(
                     selected = false,
                     onClick = onBackToDashboard,
                     icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                    label = { Text("Dashboard", fontSize = 11.sp) }
+                    label = { Text("Dashboard", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
                 NavigationBarItem(
                     selected = true,
                     onClick = { },
                     icon = { Icon(Icons.Default.Description, contentDescription = "My Reports") },
-                    label = { Text("My Reports", fontSize = 11.sp) }
+                    label = { Text("My Reports", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onNavigateToClusters,
+                    icon = { Icon(Icons.Default.Hub, contentDescription = "Clusters") },
+                    label = { Text("Clusters", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToSupport,
                     icon = { Icon(Icons.Default.HelpOutline, contentDescription = "Help") },
-                    label = { Text("Help", fontSize = 11.sp) }
+                    label = { Text("Help", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
             }
         }
@@ -238,8 +242,9 @@ fun MyReportsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "You haven't reported any issues yet.",
-                        color = BrandCharcoal.copy(alpha = 0.6f),
-                        fontSize = 14.sp
+                        color = BrandCharcoal.copy(alpha = 0.7f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -299,13 +304,14 @@ private fun ReportCard(
                     Text(
                         text = ticket.category.displayName,
                         color = BrandCharcoal,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold
                     )
                     Text(
                         text = formatDate(ticket.createdAt?.toDate()),
-                        color = BrandCharcoal.copy(alpha = 0.4f),
-                        fontSize = 11.sp
+                        color = BrandCharcoal.copy(alpha = 0.55f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
                 StatusBadge(status = ticket.status)
@@ -315,8 +321,9 @@ private fun ReportCard(
 
             Text(
                 text = ticket.description,
-                color = BrandCharcoal.copy(alpha = 0.7f),
-                fontSize = 13.sp
+                color = BrandCharcoal.copy(alpha = 0.85f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
             )
 
             if (ticket.hasTechnician) {
@@ -330,11 +337,11 @@ private fun ReportCard(
                 ) {
                     Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF1D4ED8), modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(ticket.technicianName ?: "", color = Color(0xFF1E3A8A), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(ticket.technicianName ?: "", color = Color(0xFF1E3A8A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.width(12.dp))
                     Icon(Icons.Default.Phone, contentDescription = null, tint = Color(0xFF1D4ED8), modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(ticket.technicianContact ?: "", color = Color(0xFF1E3A8A), fontSize = 12.sp)
+                    Text(ticket.technicianContact ?: "", color = Color(0xFF1E3A8A), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
@@ -349,9 +356,9 @@ private fun ReportCard(
                 ) {
                     Icon(Icons.Default.Warning, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Taking longer than usual.", color = ErrorRed, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text("Taking longer than usual.", color = ErrorRed, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     TextButton(onClick = onEscalate) {
-                        Text("Escalate", color = ErrorRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Escalate", color = ErrorRed, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
@@ -367,7 +374,7 @@ private fun ReportCard(
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("It's fixed", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("It's fixed", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                     OutlinedButton(
                         onClick = onReject,
@@ -377,7 +384,7 @@ private fun ReportCard(
                     ) {
                         Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Still broken", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Still broken", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -390,7 +397,7 @@ private fun ReportCard(
                         .background(color = Color(0xFFFFFBEB), shape = RoundedCornerShape(12.dp))
                         .padding(10.dp)
                 ) {
-                    Text("Rate the Technician", color = Color(0xFF92400E), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Rate the Technician", color = Color(0xFF92400E), fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         for (star in 1..5) {
@@ -411,7 +418,7 @@ private fun ReportCard(
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                             ) {
-                                Text("Submit", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Submit", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }
@@ -421,7 +428,7 @@ private fun ReportCard(
             if (ticket.status == TicketStatus.CLOSED && ticket.rating != null) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("You rated this:", color = BrandCharcoal.copy(alpha = 0.6f), fontSize = 11.sp)
+                    Text("You rated this:", color = BrandCharcoal.copy(alpha = 0.7f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     Spacer(modifier = Modifier.width(4.dp))
                     for (star in 1..5) {
                         Icon(
@@ -439,15 +446,16 @@ private fun ReportCard(
                 TextButton(onClick = onCancel) {
                     Icon(Icons.Default.Delete, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Cancel this report", color = ErrorRed, fontSize = 12.sp)
+                    Text("Cancel this report", color = ErrorRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "ID: ${ticket.id.take(6)}...",
-                color = BrandCharcoal.copy(alpha = 0.3f),
-                fontSize = 10.sp
+                color = BrandCharcoal.copy(alpha = 0.35f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
             )
         }
     }

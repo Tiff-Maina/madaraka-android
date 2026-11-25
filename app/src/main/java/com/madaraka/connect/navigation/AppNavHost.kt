@@ -1,17 +1,8 @@
 package com.madaraka.connect.navigation
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -24,14 +15,11 @@ import com.madaraka.connect.ui.auth.LoginScreen
 import com.madaraka.connect.ui.auth.RegisterScreen
 import com.madaraka.connect.ui.dispatcher.DispatcherAnalyticsScreen
 import com.madaraka.connect.ui.dispatcher.DispatcherDashboardScreen
+import com.madaraka.connect.ui.resident.HelpSupportScreen
 import com.madaraka.connect.ui.resident.MasterIncidentsScreen
 import com.madaraka.connect.ui.resident.MyReportsScreen
 import com.madaraka.connect.ui.resident.ReportFaultScreen
 import com.madaraka.connect.ui.resident.ResidentDashboardScreen
-
-private val BrandBlue = Color(0xFF2563EB)
-private val BrandCharcoal = Color(0xFF111827)
-private val PageBackground = Color(0xFFF8FAFC)
 
 // Route names used across navigation
 object Routes {
@@ -61,7 +49,6 @@ fun AppNavHost(
         ?: "Dispatcher"
     val adminEmail = currentProfile?.email.orEmpty()
 
-    // Select start destination from signed-in user's role
     val startDestination = when {
         currentProfile == null -> Routes.LOGIN
         role?.name == "RESIDENT" -> Routes.RESIDENT_DASHBOARD
@@ -123,7 +110,12 @@ fun AppNavHost(
         composable(Routes.MY_REPORTS) {
             MyReportsScreen(
                 residentId = residentId,
-                onBackToDashboard = { navController.popBackStack() },
+                onBackToDashboard = {
+                    navController.navigate(Routes.RESIDENT_DASHBOARD) {
+                        popUpTo(Routes.RESIDENT_DASHBOARD) { inclusive = true }
+                    }
+                },
+                onNavigateToClusters = { navController.navigate(Routes.MASTER_INCIDENTS) },
                 onNavigateToSupport = { navController.navigate(Routes.HELP) }
             )
         }
@@ -142,7 +134,15 @@ fun AppNavHost(
         }
 
         composable(Routes.HELP) {
-            HelpScreen(onBack = { navController.popBackStack() })
+            HelpSupportScreen(
+                residentId = residentId,
+                residentEmail = FirebaseAuth.getInstance().currentUser?.email.orEmpty(),
+                onBack = {
+                    navController.navigate(Routes.RESIDENT_DASHBOARD) {
+                        popUpTo(Routes.RESIDENT_DASHBOARD) { inclusive = true }
+                    }
+                }
+            )
         }
 
         // ----- DISPATCHER ROUTES -----
@@ -186,24 +186,5 @@ fun AppNavHost(
                 }
             )
         }
-    }
-}
-
-// Placeholder Help and Support screen
-@Composable
-private fun HelpScreen(onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PageBackground)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("Help & Support", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = BrandCharcoal)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Support form coming soon.", fontSize = 14.sp, color = Color(0xFF64748B))
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onBack) { Text("Back") }
     }
 }

@@ -53,19 +53,15 @@ class ResidentViewModel(
     private val ticketRepository: TicketRepository = TicketRepository()
 ) : ViewModel() {
 
-    // Resident tickets sorted newest first
     private val _tickets = MutableStateFlow<List<Ticket>>(emptyList())
     val tickets: StateFlow<List<Ticket>> = _tickets.asStateFlow()
 
-    // Loading state for initial fetch
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Error message if loading fails
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // Fetch tickets for the signed-in resident
     fun loadTickets(residentId: String) {
         if (residentId.isBlank()) return
         _isLoading.value = true
@@ -92,7 +88,9 @@ fun ResidentDashboardScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    // Reload tickets on initial load and when returning to screen
+    // Controls the sign-out confirmation dialog
+    var showSignOutDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(residentId) {
         if (residentId.isNotBlank()) {
             viewModel.loadTickets(residentId)
@@ -100,8 +98,6 @@ fun ResidentDashboardScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    // Refresh tickets whenever the dashboard resumes
     DisposableEffect(lifecycleOwner, residentId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && residentId.isNotBlank()) {
@@ -120,6 +116,28 @@ fun ResidentDashboardScreen(
         it.status == TicketStatus.RESOLVED || it.status == TicketStatus.CLOSED
     }
 
+    // Sign-out confirmation dialog
+    if (showSignOutDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignOutDialog = false },
+            title = { Text("Sign Out?", fontWeight = FontWeight.Bold) },
+            text = { Text("You will be signed out of the resident dashboard.", fontSize = 15.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSignOutDialog = false
+                    onSignOut()
+                }) {
+                    Text("Sign Out", color = ErrorRed, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutDialog = false }) {
+                    Text("Cancel", color = BrandCharcoal, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                }
+            }
+        )
+    }
+
     Scaffold(
         containerColor = PageBackground,
         topBar = {
@@ -135,7 +153,7 @@ fun ResidentDashboardScreen(
                     Text(
                         text = "Resident Dashboard",
                         color = BrandCharcoal,
-                        fontSize = 20.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -146,7 +164,7 @@ fun ResidentDashboardScreen(
                                 tint = BrandCharcoal
                             )
                         }
-                        IconButton(onClick = onSignOut) {
+                        IconButton(onClick = { showSignOutDialog = true }) {
                             Icon(
                                 imageVector = Icons.Default.Logout,
                                 contentDescription = "Sign Out",
@@ -163,25 +181,25 @@ fun ResidentDashboardScreen(
                     selected = true,
                     onClick = { },
                     icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                    label = { Text("Dashboard", fontSize = 11.sp) }
+                    label = { Text("Dashboard", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onViewAllReports,
                     icon = { Icon(Icons.Default.Description, contentDescription = "My Reports") },
-                    label = { Text("My Reports", fontSize = 11.sp) }
+                    label = { Text("My Reports", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToClusters,
                     icon = { Icon(Icons.Default.Hub, contentDescription = "Clusters") },
-                    label = { Text("Clusters", fontSize = 11.sp) }
+                    label = { Text("Clusters", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToSupport,
                     icon = { Icon(Icons.Default.HelpOutline, contentDescription = "Help") },
-                    label = { Text("Help", fontSize = 11.sp) }
+                    label = { Text("Help", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 )
             }
         }
@@ -209,11 +227,12 @@ fun ResidentDashboardScreen(
                     Text(
                         text = errorMessage ?: "",
                         color = ErrorRed,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(onClick = { viewModel.loadTickets(residentId) }) {
-                        Text("Retry")
+                        Text("Retry", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -229,7 +248,6 @@ fun ResidentDashboardScreen(
         ) {
             item { Spacer(modifier = Modifier.height(4.dp)) }
 
-            // Report fault banner card
             item {
                 Box(
                     modifier = Modifier
@@ -246,14 +264,15 @@ fun ResidentDashboardScreen(
                         Text(
                             text = "Experiencing an Issue?",
                             color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "Report water leaks, power outages, or waste issues directly to the Madaraka dispatch team.",
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 13.sp
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
@@ -266,13 +285,12 @@ fun ResidentDashboardScreen(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Report New Fault", fontWeight = FontWeight.Bold)
+                            Text("Report New Fault", fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
             }
 
-            // Summary stat cards
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard(
@@ -296,7 +314,6 @@ fun ResidentDashboardScreen(
                 }
             }
 
-            // Recent activity section header
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -306,11 +323,11 @@ fun ResidentDashboardScreen(
                     Text(
                         text = "Recent Activity",
                         color = BrandCharcoal,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold
                     )
                     TextButton(onClick = onViewAllReports) {
-                        Text("View all", color = BrandBlue, fontSize = 13.sp)
+                        Text("View all", color = BrandBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Icon(
                             Icons.Default.ArrowForward,
                             contentDescription = null,
@@ -336,8 +353,9 @@ fun ResidentDashboardScreen(
                         ) {
                             Text(
                                 text = "No recent activity.",
-                                color = BrandCharcoal.copy(alpha = 0.5f),
-                                fontSize = 13.sp
+                                color = BrandCharcoal.copy(alpha = 0.6f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
@@ -353,7 +371,6 @@ fun ResidentDashboardScreen(
     }
 }
 
-// Single metric card on the dashboard
 @Composable
 private fun StatCard(
     label: String,
@@ -373,21 +390,21 @@ private fun StatCard(
         ) {
             Text(
                 text = label,
-                color = BrandCharcoal.copy(alpha = 0.6f),
-                fontSize = 12.sp
+                color = BrandCharcoal.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = value,
                 color = valueColor,
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.ExtraBold
             )
         }
     }
 }
 
-// Single ticket summary row under Recent Activity
 @Composable
 private fun RecentActivityRow(ticket: Ticket) {
     Card(
@@ -401,20 +418,21 @@ private fun RecentActivityRow(ticket: Ticket) {
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            CategoryIcon(category = ticket.category, size = 40)
+            CategoryIcon(category = ticket.category, size = 42)
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = ticket.category.displayName,
                     color = BrandCharcoal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = ticket.description,
-                    color = BrandCharcoal.copy(alpha = 0.6f),
-                    fontSize = 12.sp,
+                    color = BrandCharcoal.copy(alpha = 0.7f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1
                 )
             }
@@ -424,15 +442,15 @@ private fun RecentActivityRow(ticket: Ticket) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = formatDate(ticket.createdAt?.toDate()),
-                    color = BrandCharcoal.copy(alpha = 0.4f),
-                    fontSize = 10.sp
+                    color = BrandCharcoal.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
     }
 }
 
-// Format ticket date for display
 private fun formatDate(date: Date?): String {
     if (date == null) return "Just now"
     return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(date)

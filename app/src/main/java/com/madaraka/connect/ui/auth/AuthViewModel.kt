@@ -1,11 +1,13 @@
 package com.madaraka.connect.ui.auth
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
+import com.madaraka.connect.data.local.EmailHistoryStore
 import com.madaraka.connect.data.models.User
 import com.madaraka.connect.data.models.UserRole
 import com.madaraka.connect.data.repositories.UserRepository
@@ -15,16 +17,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
-private val BrandBlue = androidx.compose.ui.graphics.Color(0xFF2563EB)
-private val BrandCharcoal = androidx.compose.ui.graphics.Color(0xFF111827)
-private val PageBackground = androidx.compose.ui.graphics.Color(0xFFF8FAFC)
-private val ErrorRed = androidx.compose.ui.graphics.Color(0xFFDC2626)
-
 // ViewModel managing authentication state and user profile loading
 class AuthViewModel(
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
-) : ViewModel() {
+    application: Application,
+    private val auth: FirebaseAuth,
+    private val firestore: FirebaseFirestore
+) : AndroidViewModel(application) {
+
+    // Secondary constructor so Android's ViewModel factory can instantiate us
+    constructor(application: Application) : this(
+        application = application,
+        auth = FirebaseAuth.getInstance(),
+        firestore = FirebaseFirestore.getInstance()
+    )
 
     // Active Firebase Auth user or null when signed out
     private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
@@ -36,6 +41,9 @@ class AuthViewModel(
 
     // Repository for reading user documents
     private val userRepository = UserRepository(firestore)
+
+    // Local store for remembered emails
+    private val emailHistoryStore = EmailHistoryStore(application.applicationContext)
 
     // Loading indicator flag for auth actions
     private val _isLoading = MutableStateFlow(false)
@@ -59,6 +67,12 @@ class AuthViewModel(
     fun clearError() {
         _errorMessage.value = null
     }
+
+    // Returns emails previously used to sign in, most recent first
+    fun getSavedEmails(): List<String> = emailHistoryStore.getEmails()
+
+    // Remembers a successfully used email for next time
+    fun saveEmail(email: String) = emailHistoryStore.addEmail(email)
 
     // Sign in with email and password and verify Firestore profile
     fun signIn(email: String, password: String, onSuccess: () -> Unit) {
@@ -92,6 +106,9 @@ class AuthViewModel(
                     _errorMessage.value = "Your account is suspended. Contact the administrator."
                     return@launch
                 }
+
+                // Remember this email for the dropdown on the login screen
+                saveEmail(email.trim())
 
                 _currentUserProfile.value = profile
                 _isLoading.value = false
@@ -151,6 +168,9 @@ class AuthViewModel(
                         createdAt = now
                     )
                 }
+
+                // Remember this email for the dropdown on the login screen
+                saveEmail(cleanEmail)
 
                 _currentUserProfile.value = profile
                 _isLoading.value = false

@@ -14,12 +14,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.madaraka.connect.data.models.Ticket
 
 private val BrandBlue = Color(0xFF2563EB)
 private val BrandCharcoal = Color(0xFF111827)
@@ -38,12 +34,55 @@ private val AmberBorder = Color(0xFFFDE68A)
 private val AiPurple = Color(0xFF7C3AED)
 private val AiPurpleBg = Color(0xFFF5F3FF)
 
+private data class DeduplicationImpact(
+    val totalReports: Int,
+    val effectiveIncidents: Int,
+    val savedPercent: Int
+)
+
+private fun computeDeduplicationImpact(tickets: List<Ticket>): DeduplicationImpact {
+    val totalReports = tickets.size
+    if (totalReports == 0) {
+        return DeduplicationImpact(totalReports = 0, effectiveIncidents = 0, savedPercent = 0)
+    }
+
+    val countsByIncidentId = tickets
+        .mapNotNull { it.masterIncidentId?.takeIf { id -> id.isNotBlank() } }
+        .groupingBy { it }
+        .eachCount()
+
+    val multiReportClusters = countsByIncidentId.count { it.value >= 2 }
+    val clusteredTicketCount = countsByIncidentId
+        .filter { it.value >= 2 }
+        .values
+        .sum()
+    val standaloneReports = totalReports - clusteredTicketCount
+
+    val effectiveIncidents = multiReportClusters + standaloneReports
+    val savedReports = (totalReports - effectiveIncidents).coerceAtLeast(0)
+    val deduplicationPercent = ((savedReports.toDouble() / totalReports) * 100).toInt()
+
+    return DeduplicationImpact(
+        totalReports = totalReports,
+        effectiveIncidents = effectiveIncidents,
+        savedPercent = deduplicationPercent
+    )
+}
+
 @Composable
 fun DispatcherAnalyticsScreen(
+    department: String = "",
+    agencyName: String = "",
     onBack: () -> Unit = {},
     onSignOut: () -> Unit = {},
     viewModel: DispatcherViewModel = viewModel()
 ) {
+    LaunchedEffect(department, agencyName) {
+        if (department.isNotBlank()) {
+            viewModel.load(department, agencyName)
+        }
+    }
+
     val tickets by viewModel.tickets.collectAsState()
 
     val average = viewModel.averageRating
@@ -51,15 +90,7 @@ fun DispatcherAnalyticsScreen(
     val breakdown = viewModel.ratingBreakdown()
     val totalRatedForPercent = if (ratedCount > 0) ratedCount else 1
 
-    // AI deduplication metrics
-    val total = tickets.size
-    val groupedTickets = tickets.filter { !it.masterIncidentId.isNullOrBlank() }
-    val distinctGroups = groupedTickets.mapNotNull { it.masterIncidentId }.distinct().size
-    val ungrouped = total - groupedTickets.size
-    val incidents = distinctGroups + ungrouped
-    val deduplicationPercent = if (total > 0 && incidents < total) {
-        ((total - incidents).toDouble() / total * 100).toInt()
-    } else 0
+    val impact = remember(tickets) { computeDeduplicationImpact(tickets) }
 
     var showSignOutDialog by remember { mutableStateOf(false) }
 
@@ -121,13 +152,13 @@ fun DispatcherAnalyticsScreen(
                     selected = false,
                     onClick = onBack,
                     icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                    label = { Text("Dashboard", fontSize = 11.sp) }
+                    label = { Text("Dashboard", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                 )
                 NavigationBarItem(
                     selected = true,
                     onClick = { },
                     icon = { Icon(Icons.Default.BarChart, contentDescription = "Analytics") },
-                    label = { Text("Analytics", fontSize = 11.sp) }
+                    label = { Text("Analytics", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                 )
             }
         }
@@ -139,7 +170,6 @@ fun DispatcherAnalyticsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            // AI Value section
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -165,19 +195,19 @@ fun DispatcherAnalyticsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AiStatCell(
                             label = "Reports",
-                            value = total.toString(),
+                            value = impact.totalReports.toString(),
                             color = BrandCharcoal,
                             modifier = Modifier.weight(1f)
                         )
                         AiStatCell(
                             label = "Incidents",
-                            value = incidents.toString(),
+                            value = impact.effectiveIncidents.toString(),
                             color = AiPurple,
                             modifier = Modifier.weight(1f)
                         )
                         AiStatCell(
                             label = "Saved",
-                            value = "$deduplicationPercent%",
+                            value = "${impact.savedPercent}%",
                             color = Color(0xFF10B981),
                             modifier = Modifier.weight(1f)
                         )
@@ -193,7 +223,6 @@ fun DispatcherAnalyticsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Big average card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
@@ -231,7 +260,7 @@ fun DispatcherAnalyticsScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Based on $ratedCount reviews",
+                        text = "Based on $ratedCount review${if (ratedCount == 1) "" else "s"}",
                         color = Color(0xFFB45309),
                         fontSize = 12.sp
                     )
@@ -240,7 +269,6 @@ fun DispatcherAnalyticsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Rating breakdown
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -305,7 +333,6 @@ fun DispatcherAnalyticsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Info card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -355,7 +382,7 @@ private fun AiStatCell(
                 .padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(label, color = BrandCharcoal.copy(alpha = 0.6f), fontSize = 10.sp)
+            Text(label, color = BrandCharcoal.copy(alpha = 0.65f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Spacer(modifier = Modifier.height(2.dp))
             Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         }

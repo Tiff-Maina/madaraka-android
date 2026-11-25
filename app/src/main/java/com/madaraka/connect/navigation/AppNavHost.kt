@@ -163,6 +163,8 @@ fun AppNavHost(
 
         composable(Routes.DISPATCHER_ANALYTICS) {
             DispatcherAnalyticsScreen(
+                department = department,
+                agencyName = agencyName,
                 onBack = { navController.popBackStack() },
                 onSignOut = {
                     viewModel.signOut()

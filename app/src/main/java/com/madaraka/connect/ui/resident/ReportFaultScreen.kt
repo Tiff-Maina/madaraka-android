@@ -81,7 +81,14 @@ fun ReportFaultScreen(
     var submittedTicketId by remember { mutableStateOf<String?>(null) }
     var lastDecision by remember { mutableStateOf<DeduplicationDecision?>(null) }
 
+    val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(submittedTicketId) {
+        if (submittedTicketId != null) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     fun parseCoordinateInputs(): Pair<GeoPoint?, String?> {
         val latStr = latitudeText.trim()
@@ -133,8 +140,8 @@ fun ReportFaultScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
@@ -197,34 +204,44 @@ fun ReportFaultScreen(
                     }
             }
 
-            // 2. GPS coordinates + quick demo presets
+            // 2. GPS coordinates + quick demo presets (Spot A & Spot A2 on row 1, Spot B below)
             Text(
                 text = "2. Location inside Madaraka Estate (GPS)",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp
             )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                MadarakaPresets.forEach { preset ->
-                    FilterChip(
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MadarakaPresets.take(2).forEach { preset ->
+                        PresetFilterChip(
+                            preset = preset,
+                            selected = latitudeText.trim() == preset.lat && longitudeText.trim() == preset.lng,
+                            onSelect = {
+                                latitudeText = preset.lat
+                                longitudeText = preset.lng
+                                activePresetHint = preset.hint
+                                errorMessage = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                MadarakaPresets.drop(2).forEach { preset ->
+                    PresetFilterChip(
+                        preset = preset,
                         selected = latitudeText.trim() == preset.lat && longitudeText.trim() == preset.lng,
-                        onClick = {
+                        onSelect = {
                             latitudeText = preset.lat
                             longitudeText = preset.lng
                             activePresetHint = preset.hint
                             errorMessage = null
                         },
-                        label = { Text(preset.label, fontSize = 11.sp, maxLines = 1) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.LocationOn,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -381,13 +398,13 @@ fun ReportFaultScreen(
             }
 
             // Explainable AI Decision Card
+            // Submission Confirmation Card
             if (submittedTicketId != null && lastDecision != null) {
-                val decision = lastDecision!!
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F3FF)),
-                    border = BorderStroke(1.dp, AiPurple.copy(alpha = 0.4f))
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDF4)),
+                    border = BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.35f))
                 ) {
                     Column(
                         modifier = Modifier
@@ -397,63 +414,67 @@ fun ReportFaultScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Default.SmartToy,
+                                imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = AiPurple,
+                                tint = SuccessGreen,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (decision.isNewIncident)
-                                    "New Master Incident Created"
-                                else
-                                    "Grouped into Existing Master Incident",
-                                color = AiPurple,
-                                fontSize = 14.sp,
+                                text = "Report Sent",
+                                color = SuccessGreen,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = SuccessGreen,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Ticket #${submittedTicketId!!.take(8)} · Incident ${decision.masterIncidentId.take(8)}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF111827)
-                            )
-                        }
-
                         Text(
-                            text = decision.explanation,
+                            text = "Your report has been submitted (Reference #${submittedTicketId!!.take(8)}).",
                             fontSize = 13.sp,
-                            color = Color(0xFF1F2937)
+                            color = Color(0xFF111827)
                         )
 
-                        decision.distanceMeters?.let { dist ->
-                            Text(
-                                text = "Measured distance: ${String.format(Locale.US, "%.1f", dist)} m (Threshold: ${SpatialDeduplicator.DEFAULT_RADIUS_METERS.toInt()} m · Window: 1 hr)",
-                                fontSize = 12.sp,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-
-                        OutlinedButton(
+                        Button(
                             onClick = { onReportSubmitted(submittedTicketId!!) },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = ReportBlue)
                         ) {
                             Text("Back to Dashboard", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
+}
+
+@Composable
+private fun PresetFilterChip(
+    preset: DemoLocationPreset,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onSelect,
+        modifier = modifier,
+        label = {
+            Text(
+                text = preset.label,
+                fontSize = 12.sp,
+                maxLines = 1
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+    )
 }

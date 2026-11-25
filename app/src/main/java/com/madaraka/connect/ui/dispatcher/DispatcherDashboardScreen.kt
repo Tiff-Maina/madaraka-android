@@ -84,13 +84,21 @@ fun DispatcherDashboardScreen(
     val ticketsRaw: List<Ticket> = remember(allLoadedTickets, selectedTab) {
         when (selectedTab) {
             DispatcherTab.ACTIVE -> allLoadedTickets.filter {
-                it.status != TicketStatus.CLOSED && it.status != TicketStatus.CANCELLED
+                it.status != TicketStatus.RESOLVED &&
+                        it.status != TicketStatus.CLOSED &&
+                        it.status != TicketStatus.CANCELLED
             }
-            DispatcherTab.GROUPED -> allLoadedTickets.filter {
-                !it.masterIncidentId.isNullOrBlank()
+            DispatcherTab.GROUPED -> {
+                val clusteredIncidentIds = allLoadedTickets
+                    .mapNotNull { it.masterIncidentId?.takeIf { id -> id.isNotBlank() } }
+                    .groupingBy { it }
+                    .eachCount()
+                    .filter { it.value >= 2 }
+                    .keys
+                allLoadedTickets.filter { it.masterIncidentId in clusteredIncidentIds }
             }
             DispatcherTab.CLOSED -> allLoadedTickets.filter {
-                it.status == TicketStatus.CLOSED
+                it.status == TicketStatus.RESOLVED || it.status == TicketStatus.CLOSED
             }
             DispatcherTab.CANCELLED -> allLoadedTickets.filter {
                 it.status == TicketStatus.CANCELLED
@@ -318,12 +326,12 @@ private fun TabSummaryBanner(
         DispatcherTab.GROUPED -> TabSummary(
             Color(0xFFF5F3FF), AiPurple,
             "AI-Grouped Incidents",
-            "$groupedCount master incident${if (groupedCount == 1) "" else "s"} · $count report${if (count == 1) "" else "s"} grouped (K-Means / 150m & 1h)"
+            "$groupedCount cluster${if (groupedCount == 1) "" else "s"} · $count report${if (count == 1) "" else "s"} grouped (150m & 1h)"
         )
         DispatcherTab.CLOSED -> TabSummary(
             Color(0xFFF1F5F9), BrandCharcoal,
             "Closed Tickets",
-            "$count resolved ticket${if (count == 1) "" else "s"}"
+            "$count resolved/closed ticket${if (count == 1) "" else "s"}"
         )
         DispatcherTab.CANCELLED -> TabSummary(
             Color(0xFFFEF2F2), ErrorRed,
@@ -354,27 +362,37 @@ private data class TabSummary(
 
 private fun emptyMessageFor(tab: DispatcherTab): String = when (tab) {
     DispatcherTab.ACTIVE -> "No active tickets."
-    DispatcherTab.GROUPED -> "No AI-grouped incidents yet. Nearby reports in the same category and time window will appear here."
+    DispatcherTab.GROUPED -> "No AI-grouped incidents yet. Two or more nearby reports in the same category and time window will cluster here."
     DispatcherTab.CLOSED -> "No closed tickets yet."
     DispatcherTab.CANCELLED -> "No cancelled tickets."
 }
 
 private fun groupTickets(tickets: List<Ticket>): List<DispatcherItem> {
-    val groups = LinkedHashMap<String, MutableList<Ticket>>()
-    val singles = mutableListOf<DispatcherItem>()
+    val buckets = LinkedHashMap<String, MutableList<Ticket>>()
+    val noIncident = mutableListOf<Ticket>()
 
     tickets.forEach { t ->
         val id = t.masterIncidentId
         if (id.isNullOrBlank()) {
-            singles.add(DispatcherItem.Single(t))
+            noIncident.add(t)
         } else {
-            groups.getOrPut(id) { mutableListOf() }.add(t)
+            buckets.getOrPut(id) { mutableListOf() }.add(t)
         }
     }
 
-    val groupItems: List<DispatcherItem> = groups.map { (id, list) ->
-        DispatcherItem.Group(id, list) as DispatcherItem
-    }.sortedByDescending { g ->
+    val singles = mutableListOf<DispatcherItem>()
+    val groupItems = mutableListOf<DispatcherItem>()
+
+    buckets.forEach { (id, list) ->
+        if (list.size >= 2) {
+            groupItems.add(DispatcherItem.Group(id, list))
+        } else {
+            singles.addAll(list.map { DispatcherItem.Single(it) })
+        }
+    }
+    singles.addAll(noIncident.map { DispatcherItem.Single(it) })
+
+    val sortedGroups = groupItems.sortedByDescending { g ->
         val grouped = g as DispatcherItem.Group
         val hasUrgent = grouped.tickets.any {
             it.status == TicketStatus.ESCALATED || it.status == TicketStatus.ADMIN_REVIEWED
@@ -382,7 +400,7 @@ private fun groupTickets(tickets: List<Ticket>): List<DispatcherItem> {
         if (hasUrgent) 1 else 0
     }
 
-    return groupItems + singles
+    return sortedGroups + singles
 }
 
 @Composable
@@ -407,7 +425,7 @@ private fun GroupedIncidentCard(
         AlertDialog(
             onDismissRequest = { showTicketsDialog = false },
             title = {
-                Text("${item.masterIncidentId} · $count report${if (count == 1) "" else "s"}", fontWeight = FontWeight.Bold)
+                Text("${item.masterIncidentId} · $count reports", fontWeight = FontWeight.Bold)
             },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -454,7 +472,7 @@ private fun GroupedIncidentCard(
                 Icon(Icons.Default.SmartToy, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (count > 1) "AI CLUSTER ($count REPORTS)" else "MASTER INCIDENT (1 REPORT)",
+                    text = "AI CLUSTER ($count REPORTS)",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.ExtraBold
@@ -489,10 +507,7 @@ private fun GroupedIncidentCard(
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = if (count > 1)
-                                "$count nearby reports grouped within 150m & 1h"
-                            else
-                                "Single report tracking this area",
+                            text = "$count nearby reports grouped within 150m & 1h",
                             color = AiPurple,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -553,7 +568,7 @@ private fun GroupedIncidentCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("View all $count report${if (count == 1) "" else "s"}", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("View all $count reports", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
